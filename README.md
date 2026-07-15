@@ -21,10 +21,11 @@ proves the idea works.
 - Rendering via `ebiten`, with no HTML/CSS/JS involved
 - Clicking a button updates state, which updates the screen — the
   full cycle of a reactive framework, in miniature
-- An HTTP/HTTPS network layer (`cmd/fetch`), using Go's standard
-  `net/http` client to fetch a page and show the raw response (status
-  + body) as plain text in the native UI — no HTML parsing yet, but
-  the first real step towards reading the web
+- An HTTP/HTTPS network layer with a real address bar (`cmd/fetch`),
+  using Go's standard `net/http` client: type any URL, press Enter,
+  and see the raw response (status + body) as plain text in the
+  native UI — no HTML parsing yet, but the first real step towards
+  reading the web
 
 ## How to run
 

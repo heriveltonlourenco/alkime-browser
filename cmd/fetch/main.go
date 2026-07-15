@@ -1,8 +1,8 @@
 // cmd/fetch proves alkime-browser can reach the web over HTTP and
 // HTTPS using Go's standard net/http client, and shows the raw
-// response in the native UI. This is the first step towards evolving
-// the project into an actual browser — no HTML parsing yet, the
-// response body is treated as opaque plain text.
+// response in the native UI. An address bar lets the user type any
+// URL — no HTML parsing yet, the response body is treated as opaque
+// plain text.
 package main
 
 import (
@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	httpDemoURL  = "http://example.com/"
-	httpsDemoURL = "https://example.com/"
+	defaultURL = "https://example.com/"
 
 	// how much of the response body to show on screen, and how many
 	// characters fit on one line of the fixed-size window below.
@@ -35,46 +34,60 @@ const (
 var client = &http.Client{Timeout: 10 * time.Second}
 
 func main() {
-	result := reactive.NewSignal("Click a button to fetch a page over HTTP or HTTPS.")
+	addressBar := reactive.NewSignal(defaultURL)
+	result := reactive.NewSignal("Press Enter to fetch the URL above.")
 
-	fetch := func(url string) {
-		result.Set(doFetch(url))
+	navigate := func() {
+		result.Set(doFetch(normalizeURL(addressBar.Get())))
+	}
+
+	address := &ui.Node{
+		Kind:    ui.KindTextInput,
+		Text:    addressBar.Get,
+		Focused: true,
+		OnChar: func(r rune) {
+			addressBar.Set(addressBar.Get() + string(r))
+		},
+		OnBackspace: func() {
+			v := addressBar.Get()
+			if len(v) > 0 {
+				addressBar.Set(v[:len(v)-1])
+			}
+		},
+		OnSubmit: navigate,
+		X:        20, Y: 20, W: windowWidth - 40, H: 32,
 	}
 
 	status := &ui.Node{
 		Kind: ui.KindText,
 		Text: result.Get,
-		X:    20, Y: 20,
+		X:    20, Y: 70,
 	}
 
-	httpButton := &ui.Node{
-		Kind:    ui.KindButton,
-		Text:    func() string { return "Fetch HTTP" },
-		OnClick: func() { fetch(httpDemoURL) },
-		X:       20, Y: windowHeight - 60, W: 150, H: 40,
-	}
-
-	httpsButton := &ui.Node{
-		Kind:    ui.KindButton,
-		Text:    func() string { return "Fetch HTTPS" },
-		OnClick: func() { fetch(httpsDemoURL) },
-		X:       190, Y: windowHeight - 60, W: 150, H: 40,
-	}
-
-	app := ui.NewApp([]*ui.Node{status, httpButton, httpsButton})
+	app := ui.NewApp([]*ui.Node{address, status})
 	app.Width, app.Height = windowWidth, windowHeight
 
 	ebiten.SetWindowSize(windowWidth, windowHeight)
-	ebiten.SetWindowTitle("alkime-browser — HTTP/HTTPS fetch demo")
+	ebiten.SetWindowTitle("alkime-browser — address bar demo")
 
 	if err := ebiten.RunGame(app); err != nil {
 		log.Fatal(err)
 	}
 }
 
+// normalizeURL adds an https:// scheme when the user didn't type one,
+// mirroring how real browsers treat a bare "example.com" address.
+func normalizeURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
+	return "https://" + raw
+}
+
 // doFetch performs a blocking HTTP(S) GET request and formats the
 // result as plain text. It runs synchronously on ebiten's Update
-// goroutine (triggered from OnClick), so there's no risk of a data
+// goroutine (triggered from OnSubmit), so there's no risk of a data
 // race on the Signal — the tradeoff is the window is unresponsive for
 // the duration of the request, which is acceptable for this MVP.
 func doFetch(url string) string {

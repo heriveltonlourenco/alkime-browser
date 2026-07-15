@@ -12,22 +12,33 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
-// Kind identifies the type of a node. Only two exist in this MVP.
+// Kind identifies the type of a node.
 type Kind int
 
 const (
 	KindText Kind = iota
 	KindButton
+	KindTextInput
 )
 
 // Node is the basic unit of our UI tree. Each node knows how to draw
-// itself and, if it's a button, how to react to clicks.
+// itself and, depending on its Kind, how to react to clicks or
+// keyboard input.
 type Node struct {
 	Kind    Kind
 	Text    func() string // a function instead of a fixed string, so it always reads the current signal value
 	OnClick func()
 	X, Y    int
 	W, H    int
+
+	// KindTextInput only: the node doesn't own its text — like
+	// KindText, the value comes from Text(). These callbacks let the
+	// caller update its own reactive.Signal in response to keystrokes,
+	// keeping "who owns the state" consistent across node kinds.
+	Focused     bool
+	OnChar      func(r rune)
+	OnBackspace func()
+	OnSubmit    func()
 }
 
 // App is the minimal "engine": it holds the node tree and implements
@@ -48,9 +59,9 @@ func NewApp(nodes []*Node) *App {
 	return &App{Nodes: nodes, Width: 400, Height: 300}
 }
 
-// Update is called by ebiten every frame (typically 60x/second).
-// Here we only check whether a mouse click happened and, if so,
-// whether it landed inside the bounds of any button node.
+// Update is called by ebiten every frame (typically 60x/second): it
+// dispatches mouse clicks to buttons and keyboard input to whichever
+// text input node is focused.
 func (a *App) Update() error {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		mx, my := ebiten.CursorPosition()
@@ -62,6 +73,24 @@ func (a *App) Update() error {
 			}
 		}
 	}
+
+	for _, n := range a.Nodes {
+		if n.Kind != KindTextInput || !n.Focused {
+			continue
+		}
+		for _, r := range ebiten.AppendInputChars(nil) {
+			if n.OnChar != nil {
+				n.OnChar(r)
+			}
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) && n.OnBackspace != nil {
+			n.OnBackspace()
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) && n.OnSubmit != nil {
+			n.OnSubmit()
+		}
+	}
+
 	return nil
 }
 
@@ -76,6 +105,8 @@ func (a *App) Draw(screen *ebiten.Image) {
 		switch n.Kind {
 		case KindButton:
 			drawButton(screen, n)
+		case KindTextInput:
+			drawTextInput(screen, n)
 		case KindText:
 			ebitenutil.DebugPrintAt(screen, n.Text(), n.X, n.Y)
 		}
@@ -92,6 +123,25 @@ func drawButton(screen *ebiten.Image, n *Node) {
 	screen.DrawImage(rect, opts)
 
 	ebitenutil.DebugPrintAt(screen, n.Text(), n.X+8, n.Y+n.H/2-4)
+}
+
+func drawTextInput(screen *ebiten.Image, n *Node) {
+	fieldColor := color.RGBA{R: 40, G: 40, B: 46, A: 255}
+	if n.Focused {
+		fieldColor = color.RGBA{R: 58, G: 58, B: 70, A: 255} // lighter when active, as a simple focus ring substitute
+	}
+	rect := ebiten.NewImage(n.W, n.H)
+	rect.Fill(fieldColor)
+
+	opts := &ebiten.DrawImageOptions{}
+	opts.GeoM.Translate(float64(n.X), float64(n.Y))
+	screen.DrawImage(rect, opts)
+
+	text := n.Text()
+	if n.Focused {
+		text += "_" // static cursor: good enough to signal "you can type here" without a blink timer
+	}
+	ebitenutil.DebugPrintAt(screen, text, n.X+8, n.Y+n.H/2-4)
 }
 
 // Layout defines the logical resolution of the window. Defaults to
