@@ -36,11 +36,16 @@ type Node struct {
 type App struct {
 	Nodes       []*Node
 	NeedsRedraw bool // kept for conceptual clarity; ebiten already redraws every frame
+	Width       int  // logical resolution, in pixels
+	Height      int
 }
 
-// NewApp creates a new application with the given nodes.
+// NewApp creates a new application with the given nodes. Width and
+// Height default to the original MVP's fixed 400x300 canvas; set them
+// on the returned App before RunGame if a demo needs more room (e.g.
+// to show a fetched HTTP response).
 func NewApp(nodes []*Node) *App {
-	return &App{Nodes: nodes}
+	return &App{Nodes: nodes, Width: 400, Height: 300}
 }
 
 // Update is called by ebiten every frame (typically 60x/second).
@@ -89,7 +94,8 @@ func drawButton(screen *ebiten.Image, n *Node) {
 	ebitenutil.DebugPrintAt(screen, n.Text(), n.X+8, n.Y+n.H/2-4)
 }
 
-// Layout defines the logical resolution of the window. Fixed in this MVP.
+// Layout defines the logical resolution of the window. Defaults to
+// 400x300 (see NewApp) but callers can override App.Width/Height.
 func (a *App) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return 400, 300
+	return a.Width, a.Height
 }
