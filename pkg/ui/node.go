@@ -12,6 +12,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 	"golang.org/x/image/font/basicfont"
 )
 
@@ -68,6 +69,15 @@ type Node struct {
 	OnChar      func(r rune)
 	OnBackspace func()
 	OnSubmit    func()
+
+	// KindHeading only: a cached, reusable offscreen buffer for the
+	// scaled-up text (see drawHeading). Draw() runs ~60x/second, so
+	// without this cache every visible heading would reallocate a
+	// fresh GPU texture every single frame.
+	headingBuf    *ebiten.Image
+	headingText   string
+	headingColor  *color.RGBA
+	headingBgFill *color.RGBA
 }
 
 // LineHeight returns the approximate rendered height, in pixels, of
@@ -158,15 +168,15 @@ func (a *App) Draw(screen *ebiten.Image) {
 	}
 }
 
+// Solid rectangles (button/input backgrounds, block backgrounds,
+// link underlines) are drawn directly with vector.DrawFilledRect,
+// which needs no intermediate GPU texture — unlike the
+// ebiten.NewImage+Fill+DrawImage pattern this used to use, which
+// allocated a brand-new texture every single frame.
+
 func drawButton(screen *ebiten.Image, n *Node) {
 	buttonColor := color.RGBA{R: 63, G: 63, B: 70, A: 255}
-	rect := ebiten.NewImage(n.W, n.H)
-	rect.Fill(buttonColor)
-
-	opts := &ebiten.DrawImageOptions{}
-	opts.GeoM.Translate(float64(n.X), float64(n.Y))
-	screen.DrawImage(rect, opts)
-
+	vector.DrawFilledRect(screen, float32(n.X), float32(n.Y), float32(n.W), float32(n.H), buttonColor, false)
 	ebitenutil.DebugPrintAt(screen, n.Text(), n.X+8, n.Y+n.H/2-4)
 }
 
@@ -175,12 +185,7 @@ func drawTextInput(screen *ebiten.Image, n *Node) {
 	if n.Focused {
 		fieldColor = color.RGBA{R: 58, G: 58, B: 70, A: 255} // lighter when active, as a simple focus ring substitute
 	}
-	rect := ebiten.NewImage(n.W, n.H)
-	rect.Fill(fieldColor)
-
-	opts := &ebiten.DrawImageOptions{}
-	opts.GeoM.Translate(float64(n.X), float64(n.Y))
-	screen.DrawImage(rect, opts)
+	vector.DrawFilledRect(screen, float32(n.X), float32(n.Y), float32(n.W), float32(n.H), fieldColor, false)
 
 	str := n.Text()
 	if n.Focused {
@@ -206,15 +211,12 @@ func textBounds(s string) (w, h int) {
 // drawTextBlock draws str onto dst starting at (x, y): an optional
 // background fill sized to the text, followed by each line in fg
 // using contentFace — the one shared primitive behind
-// drawContentText, drawHeading (via an offscreen buffer) and drawLink.
+// drawContentText, drawHeading (via a cached offscreen buffer) and
+// drawLink.
 func drawTextBlock(dst *ebiten.Image, str string, x, y int, fg color.Color, bg *color.RGBA) {
 	if bg != nil {
 		w, h := textBounds(str)
-		rect := ebiten.NewImage(w, h)
-		rect.Fill(*bg)
-		opts := &ebiten.DrawImageOptions{}
-		opts.GeoM.Translate(float64(x), float64(y))
-		dst.DrawImage(rect, opts)
+		vector.DrawFilledRect(dst, float32(x), float32(y), float32(w), float32(h), *bg, false)
 	}
 	for i, line := range strings.Split(str, "\n") {
 		text.Draw(dst, line, contentFace, x, y+i*debugLineHeight+contentAscent, fg)
@@ -232,7 +234,9 @@ func drawContentText(screen *ebiten.Image, n *Node) {
 // drawHeading renders text larger than normal by drawing it onto a
 // small offscreen image and scaling that image up — there's no
 // variable-size font available, so this is the cheapest way to make
-// a heading look bigger without a new font dependency.
+// a heading look bigger without a new font dependency. The buffer is
+// cached on the Node and only redrawn when its text/color/background
+// actually change, since Draw() runs ~60x/second.
 func drawHeading(screen *ebiten.Image, n *Node) {
 	str := n.Text()
 	w, h := textBounds(str)
@@ -240,17 +244,36 @@ func drawHeading(screen *ebiten.Image, n *Node) {
 		return
 	}
 
-	fg := color.Color(color.White)
-	if n.Color != nil {
-		fg = *n.Color
+	stale := n.headingBuf == nil ||
+		n.headingText != str ||
+		!sameColor(n.headingColor, n.Color) ||
+		!sameColor(n.headingBgFill, n.Background)
+
+	if stale {
+		fg := color.Color(color.White)
+		if n.Color != nil {
+			fg = *n.Color
+		}
+		buf := ebiten.NewImage(w, h)
+		drawTextBlock(buf, str, 0, 0, fg, n.Background)
+
+		n.headingBuf = buf
+		n.headingText = str
+		n.headingColor = n.Color
+		n.headingBgFill = n.Background
 	}
-	buf := ebiten.NewImage(w, h)
-	drawTextBlock(buf, str, 0, 0, fg, n.Background)
 
 	opts := &ebiten.DrawImageOptions{}
 	opts.GeoM.Scale(headingScale, headingScale)
 	opts.GeoM.Translate(float64(n.X), float64(n.Y))
-	screen.DrawImage(buf, opts)
+	screen.DrawImage(n.headingBuf, opts)
+}
+
+func sameColor(a, b *color.RGBA) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // drawLink renders text at normal size with a solid underline drawn
@@ -271,11 +294,7 @@ func drawLink(screen *ebiten.Image, n *Node) {
 		if width <= 0 {
 			continue
 		}
-		rect := ebiten.NewImage(width, 1)
-		rect.Fill(fg)
-		opts := &ebiten.DrawImageOptions{}
-		opts.GeoM.Translate(float64(n.X), float64(n.Y+i*debugLineHeight+14))
-		screen.DrawImage(rect, opts)
+		vector.DrawFilledRect(screen, float32(n.X), float32(n.Y+i*debugLineHeight+14), float32(width), 1, fg, false)
 	}
 }
 
