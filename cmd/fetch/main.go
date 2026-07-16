@@ -1,8 +1,9 @@
 // cmd/fetch proves alkime-browser can reach the web over HTTP and
-// HTTPS using Go's standard net/http client, and shows the raw
-// response in the native UI. An address bar lets the user type any
-// URL — no HTML parsing yet, the response body is treated as opaque
-// plain text.
+// HTTPS using Go's standard net/http client, and shows the result in
+// the native UI. An address bar lets the user type any URL. HTML
+// responses are run through pkg/htmltext to show readable text
+// instead of raw markup — still no layout, no images, no clickable
+// links, just the words on the page.
 package main
 
 import (
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"alkime-browser/pkg/htmltext"
 	"alkime-browser/pkg/reactive"
 	"alkime-browser/pkg/ui"
 )
@@ -22,13 +24,16 @@ import (
 const (
 	defaultURL = "https://example.com/"
 
-	// how much of the response body to show on screen, and how many
-	// characters fit on one line of the fixed-size window below.
-	maxBodyChars = 600
-	wrapWidth    = 100
+	// maxRawBytes caps how much of the response body we read/parse.
+	// maxDisplayChars caps how much rendered text we show on screen,
+	// and wrapWidth is how many characters fit on one line of the
+	// fixed-size window below.
+	maxRawBytes     = 512 * 1024
+	maxDisplayChars = 1500
+	wrapWidth       = 100
 
 	windowWidth  = 700
-	windowHeight = 480
+	windowHeight = 560
 )
 
 var client = &http.Client{Timeout: 10 * time.Second}
@@ -97,12 +102,39 @@ func doFetch(url string) string {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyChars))
-	if err != nil {
-		return fmt.Sprintf("Fetching %s\n\n%s\n\nError reading body: %v", url, resp.Status, err)
+	limited := io.LimitReader(resp.Body, maxRawBytes)
+
+	var display string
+	if isHTML(resp.Header.Get("Content-Type")) {
+		text, err := htmltext.Extract(limited)
+		if err != nil {
+			return fmt.Sprintf("Fetching %s\n\n%s\n\nError parsing HTML: %v", url, resp.Status, err)
+		}
+		display = text
+	} else {
+		body, err := io.ReadAll(limited)
+		if err != nil {
+			return fmt.Sprintf("Fetching %s\n\n%s\n\nError reading body: %v", url, resp.Status, err)
+		}
+		display = string(body)
 	}
 
-	return fmt.Sprintf("%s\n%s\n\n%s", url, resp.Status, wrap(string(body), wrapWidth))
+	return fmt.Sprintf("%s\n%s\n\n%s", url, resp.Status, wrap(truncate(display, maxDisplayChars), wrapWidth))
+}
+
+// isHTML reports whether a response's Content-Type header indicates
+// an HTML document, as opposed to plain text, JSON, images, etc.
+func isHTML(contentType string) bool {
+	return strings.Contains(contentType, "html")
+}
+
+// truncate cuts s down to at most max characters, so a large page
+// doesn't produce more text than the fixed-size window can show.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // wrap breaks s into lines of at most width characters, preserving

@@ -23,9 +23,11 @@ proves the idea works.
   full cycle of a reactive framework, in miniature
 - An HTTP/HTTPS network layer with a real address bar (`cmd/fetch`),
   using Go's standard `net/http` client: type any URL, press Enter,
-  and see the raw response (status + body) as plain text in the
-  native UI — no HTML parsing yet, but the first real step towards
-  reading the web
+  and see the page's readable text in the native UI
+- HTML text extraction (`pkg/htmltext`), using `golang.org/x/net/html`
+  to strip tags, scripts and styles from a fetched page, leaving only
+  the words a reader would actually see — no visual structure yet
+  (headings, lists and links all look like plain text)
 
 ## How to run
 
@@ -37,8 +39,12 @@ go run ./cmd/fetch  # HTTP/HTTPS network fetch demo
 
 ## What doesn't exist yet (on purpose)
 
-- Markup/template parser
-- Layout engine (positions are hardcoded)
+- Visual HTML structure: headings, lists and links are extracted as
+  plain text (`pkg/htmltext`), not rendered with any distinct look,
+  and links aren't clickable yet
+- A real layout engine: `cmd/fetch`'s node positions are still
+  hardcoded; the only "layout" is `pkg/htmltext` inserting blank
+  lines between blocks
 - Reusable components
 - Support for multiple platforms/screens
 

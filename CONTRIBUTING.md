@@ -32,7 +32,7 @@ go mod tidy
 go run ./cmd/demo
 ```
 
-Requires Go 1.22+.
+Requires Go 1.25+.
 
 ## Code style
 
