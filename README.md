@@ -24,10 +24,12 @@ proves the idea works.
 - An HTTP/HTTPS network layer with a real address bar (`cmd/fetch`),
   using Go's standard `net/http` client: type any URL, press Enter,
   and see the page's readable text in the native UI
-- HTML text extraction (`pkg/htmltext`), using `golang.org/x/net/html`
-  to strip tags, scripts and styles from a fetched page, leaving only
-  the words a reader would actually see — no visual structure yet
-  (headings, lists and links all look like plain text)
+- HTML content extraction (`pkg/htmltext`), using
+  `golang.org/x/net/html` to strip tags, scripts and styles from a
+  fetched page and split it into headings, paragraphs and links
+- Basic visual structure with no CSS: `cmd/fetch` renders headings
+  larger and links underlined, by scaling/decorating the same fixed
+  debug font — fixed per-tag rules, not a stylesheet
 
 ## How to run
 
@@ -39,12 +41,14 @@ go run ./cmd/fetch  # HTTP/HTTPS network fetch demo
 
 ## What doesn't exist yet (on purpose)
 
-- Visual HTML structure: headings, lists and links are extracted as
-  plain text (`pkg/htmltext`), not rendered with any distinct look,
-  and links aren't clickable yet
-- A real layout engine: `cmd/fetch`'s node positions are still
-  hardcoded; the only "layout" is `pkg/htmltext` inserting blank
-  lines between blocks
+- CSS: no selectors, no cascade, no arbitrary colors/fonts/sizes —
+  headings and links only look different because of two hardcoded
+  drawing rules in `pkg/ui`
+- A real layout engine: blocks are stacked top-to-bottom in a single
+  pass (`cmd/fetch`'s `buildBlockNodes`); no inline flow (a link
+  inside a paragraph gets pulled onto its own line), no reflow, no
+  scrolling for pages longer than the window
+- Clickable links
 - Reusable components
 - Support for multiple platforms/screens
 
