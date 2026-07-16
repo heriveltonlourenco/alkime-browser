@@ -2,8 +2,10 @@
 // HTTPS using Go's standard net/http client, and shows the result in
 // the native UI. An address bar lets the user type any URL. HTML
 // responses are run through pkg/htmltext to show readable content
-// with basic visual structure (bigger headings, underlined links) —
-// no CSS, no real layout engine, no clickable links yet.
+// with basic visual structure (bigger headings, underlined links) and
+// inline style="color"/"background-color" — the first slice of real
+// CSS. Still no selectors, no cascade, no real layout engine, no
+// clickable links.
 package main
 
 import (
@@ -114,9 +116,11 @@ func buildBlockNodes(blocks []htmltext.Block, startY int) []*ui.Node {
 
 		text := wrap(blk.Text, wrapWidth)
 		nodes = append(nodes, &ui.Node{
-			Kind: kind,
-			Text: func() string { return text },
-			X:    20, Y: y,
+			Kind:       kind,
+			Text:       func() string { return text },
+			Color:      blk.Color,
+			Background: blk.BackgroundColor,
+			X:          20, Y: y,
 		})
 		y += ui.LineHeight(kind, text) + blockGap
 	}

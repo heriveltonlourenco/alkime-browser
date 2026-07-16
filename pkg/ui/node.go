@@ -1,7 +1,7 @@
 // Package ui contains the minimal node tree and the renderer that
 // draws these nodes on screen using ebiten. This is the simplest
-// version possible: no CSS, no real layout engine — nodes are
-// assembled and positioned directly in Go code.
+// version possible: no CSS cascade, no real layout engine — nodes
+// are assembled and positioned directly in Go code.
 package ui
 
 import (
@@ -11,6 +11,8 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/text"
+	"golang.org/x/image/font/basicfont"
 )
 
 // Kind identifies the type of a node.
@@ -24,10 +26,19 @@ const (
 	KindLink    // like KindText, but rendered with an underline — not clickable yet
 )
 
-// Approximate metrics of ebitenutil's built-in debug font, used to
-// size and stack nodes without any real font/layout library.
+// contentFace is the font used for page content (KindText/KindHeading
+// /KindLink), chosen specifically because it supports per-call color
+// — buttons and the address bar keep using ebitenutil.DebugPrintAt's
+// fixed white-only font, since UI chrome doesn't need CSS styling.
+var contentFace = basicfont.Face7x13
+var contentAscent = contentFace.Metrics().Ascent.Round()
+
+// Approximate metrics used to size and stack nodes without any real
+// layout library: debugCharWidth/debugLineHeight match contentFace's
+// actual advance/line spacing (with a little breathing room on the
+// line height).
 const (
-	debugCharWidth  = 6
+	debugCharWidth  = 7
 	debugLineHeight = 16
 	headingScale    = 1.6
 )
@@ -41,6 +52,13 @@ type Node struct {
 	OnClick func()
 	X, Y    int
 	W, H    int
+
+	// KindText/KindHeading/KindLink only: optional inline-style
+	// overrides (see pkg/htmltext's Block.Color/BackgroundColor).
+	// nil means "use the kind's default" (white text; underline-blue
+	// for links; no background).
+	Color      *color.RGBA
+	Background *color.RGBA
 
 	// KindTextInput only: the node doesn't own its text — like
 	// KindText, the value comes from Text(). These callbacks let the
@@ -135,7 +153,7 @@ func (a *App) Draw(screen *ebiten.Image) {
 		case KindLink:
 			drawLink(screen, n)
 		case KindText:
-			ebitenutil.DebugPrintAt(screen, n.Text(), n.X, n.Y)
+			drawContentText(screen, n)
 		}
 	}
 }
@@ -164,34 +182,70 @@ func drawTextInput(screen *ebiten.Image, n *Node) {
 	opts.GeoM.Translate(float64(n.X), float64(n.Y))
 	screen.DrawImage(rect, opts)
 
-	text := n.Text()
+	str := n.Text()
 	if n.Focused {
-		text += "_" // static cursor: good enough to signal "you can type here" without a blink timer
+		str += "_" // static cursor: good enough to signal "you can type here" without a blink timer
 	}
-	ebitenutil.DebugPrintAt(screen, text, n.X+8, n.Y+n.H/2-4)
+	ebitenutil.DebugPrintAt(screen, str, n.X+8, n.Y+n.H/2-4)
 }
 
-// drawHeading renders text larger than normal by drawing the regular
-// debug font onto a small offscreen image and scaling that image up —
-// there's no variable-size font available, so this is the cheapest
-// way to make a heading look bigger without a new font dependency.
-func drawHeading(screen *ebiten.Image, n *Node) {
-	text := n.Text()
-	lines := strings.Split(text, "\n")
+// textBounds estimates the pixel size of str using the approximate
+// content-font metrics, for sizing background fills and the offscreen
+// buffer drawHeading scales up.
+func textBounds(s string) (w, h int) {
 	longest := 0
+	lines := strings.Split(s, "\n")
 	for _, line := range lines {
 		if len(line) > longest {
 			longest = len(line)
 		}
 	}
-	w := longest*debugCharWidth + 10
-	h := len(lines)*debugLineHeight + 4
+	return longest*debugCharWidth + 4, len(lines)*debugLineHeight + 4
+}
+
+// drawTextBlock draws str onto dst starting at (x, y): an optional
+// background fill sized to the text, followed by each line in fg
+// using contentFace — the one shared primitive behind
+// drawContentText, drawHeading (via an offscreen buffer) and drawLink.
+func drawTextBlock(dst *ebiten.Image, str string, x, y int, fg color.Color, bg *color.RGBA) {
+	if bg != nil {
+		w, h := textBounds(str)
+		rect := ebiten.NewImage(w, h)
+		rect.Fill(*bg)
+		opts := &ebiten.DrawImageOptions{}
+		opts.GeoM.Translate(float64(x), float64(y))
+		dst.DrawImage(rect, opts)
+	}
+	for i, line := range strings.Split(str, "\n") {
+		text.Draw(dst, line, contentFace, x, y+i*debugLineHeight+contentAscent, fg)
+	}
+}
+
+func drawContentText(screen *ebiten.Image, n *Node) {
+	fg := color.Color(color.White)
+	if n.Color != nil {
+		fg = *n.Color
+	}
+	drawTextBlock(screen, n.Text(), n.X, n.Y, fg, n.Background)
+}
+
+// drawHeading renders text larger than normal by drawing it onto a
+// small offscreen image and scaling that image up — there's no
+// variable-size font available, so this is the cheapest way to make
+// a heading look bigger without a new font dependency.
+func drawHeading(screen *ebiten.Image, n *Node) {
+	str := n.Text()
+	w, h := textBounds(str)
 	if w <= 0 || h <= 0 {
 		return
 	}
 
+	fg := color.Color(color.White)
+	if n.Color != nil {
+		fg = *n.Color
+	}
 	buf := ebiten.NewImage(w, h)
-	ebitenutil.DebugPrintAt(buf, text, 0, 0)
+	drawTextBlock(buf, str, 0, 0, fg, n.Background)
 
 	opts := &ebiten.DrawImageOptions{}
 	opts.GeoM.Scale(headingScale, headingScale)
@@ -200,21 +254,25 @@ func drawHeading(screen *ebiten.Image, n *Node) {
 }
 
 // drawLink renders text at normal size with a solid underline drawn
-// beneath each wrapped line — the closest approximation of "looks
-// like a hyperlink" available without per-character text coloring.
+// beneath each wrapped line, in the same color as the text — the
+// closest approximation of "looks like a hyperlink" available without
+// a real font or per-character styling. Defaults to a classic link
+// blue when no inline color was set.
 func drawLink(screen *ebiten.Image, n *Node) {
-	text := n.Text()
-	ebitenutil.DebugPrintAt(screen, text, n.X, n.Y)
+	fg := color.Color(color.RGBA{R: 96, G: 165, B: 250, A: 255})
+	if n.Color != nil {
+		fg = *n.Color
+	}
+	str := n.Text()
+	drawTextBlock(screen, str, n.X, n.Y, fg, n.Background)
 
-	underlineColor := color.RGBA{R: 96, G: 165, B: 250, A: 255}
-	for i, line := range strings.Split(text, "\n") {
+	for i, line := range strings.Split(str, "\n") {
 		width := len(line) * debugCharWidth
 		if width <= 0 {
 			continue
 		}
 		rect := ebiten.NewImage(width, 1)
-		rect.Fill(underlineColor)
-
+		rect.Fill(fg)
 		opts := &ebiten.DrawImageOptions{}
 		opts.GeoM.Translate(float64(n.X), float64(n.Y+i*debugLineHeight+14))
 		screen.DrawImage(rect, opts)

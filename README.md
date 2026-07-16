@@ -27,9 +27,11 @@ proves the idea works.
 - HTML content extraction (`pkg/htmltext`), using
   `golang.org/x/net/html` to strip tags, scripts and styles from a
   fetched page and split it into headings, paragraphs and links
-- Basic visual structure with no CSS: `cmd/fetch` renders headings
-  larger and links underlined, by scaling/decorating the same fixed
-  debug font — fixed per-tag rules, not a stylesheet
+- Basic visual structure (`cmd/fetch` renders headings larger and
+  links underlined) plus a first real slice of CSS: inline
+  `style="color: ...; background-color: ..."` on an element is parsed
+  and actually rendered — still no selectors, `<style>` blocks or
+  cascade, just one element's own declarations
 
 ## How to run
 
@@ -41,9 +43,9 @@ go run ./cmd/fetch  # HTTP/HTTPS network fetch demo
 
 ## What doesn't exist yet (on purpose)
 
-- CSS: no selectors, no cascade, no arbitrary colors/fonts/sizes —
-  headings and links only look different because of two hardcoded
-  drawing rules in `pkg/ui`
+- Most of CSS: no selectors, no `<style>`/external stylesheets, no
+  cascade, no properties beyond `color`/`background-color` — only an
+  element's own inline `style="..."` is read
 - A real layout engine: blocks are stacked top-to-bottom in a single
   pass (`cmd/fetch`'s `buildBlockNodes`); no inline flow (a link
   inside a paragraph gets pulled onto its own line), no reflow, no
